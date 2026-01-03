@@ -2,7 +2,7 @@
 
 > **Disclaimer**: This project is 100% vibecoded.
 
-A simple, persistent, real-time shopping list web app that works on Android and iPhone without installation.
+A simple, persistent, real-time shopping list web app that works in a browser.
 
 ## Features
 
@@ -19,68 +19,98 @@ A simple, persistent, real-time shopping list web app that works on Android and 
 
 ## Setup
 
-### 1. Azure Setup
+### 1. Automated Deployment
 
-1. Create an **Azure Storage Account**.
-2. Create a **Table** (e.g., named `shopping-list`).
-3. **Security Best Practice (Recommended)**: Use **Stored Access Policies**.
-    *   Go to the **Access Policy** blade for your Table.
-    *   Create a policy (e.g., `shoppingpolicy`) with a start and expiry time.
-    *   Generating SAS tokens linked to a policy allows you to revoke access later by modifying the policy, without changing the URLs on everyone's devices.
+This project includes a Bicep template that automates the entire infrastructure setup:
 
-4. Generate **SAS Tokens** (linked to your policy if created):
-    *   **Standard Access** (for daily shopping):
-        *   Permissions: **Read**, **Update** (allows checking off items).
-        *   Use this for the standard "View Mode" URL.
-    *   **Admin Access** (for managing the list):
-        *   Permissions: **Read**, **Add**, **Update**, **Delete**.
-        *   Use this for the "Edit Mode" URL.
+* **Creates an Azure Storage Account**.
+* **Configures CORS for Azure Table Storage**:
+  * Allowed Origins: `*` (Allows access from any domain, including your static site).
+  * Allowed Methods: `GET`, `HEAD`, `MERGE`, `POST`, `OPTIONS`, `PUT`, `DELETE`.
+  * Max Age: `200` seconds.
+* **Creates the `shoppinglist` table**.
+* **Sets up Stored Access Policies** (Best Practice):
+  * `webfulledit`: Permissions `raud` (Read, Add, Update, Delete). Use this for Edit mode.
+  * `webqueryupdate`: Permissions `ru` (Read, Update). Use this for standard View mode.
+  * **Duration**: Defaults to 1 year from deployment. Configurable via parameters.
+  * *Benefit*: Generating SAS tokens linked to a policy allows you to revoke access later by modifying the policy in Azure, without changing the URLs on everyone's devices.
+* **Enables Static Website hosting**.
+* **Uploads `index.html`** to the `$web` container.
 
-5. Copy the **Table Service SAS URL**. It should look like:
-    `https://<your-account>.table.core.windows.net/shopping-list?sv=...&sig=...`
-6. **Enable CORS**: By default, browsers block requests to Azure Table Storage. You must enable CORS on your Storage Account.
-    * Go to **CORS** settings in your Storage Account (under Settings > Resource sharing or CORS).
-    * Add a rule for the **Table service**:
-        * **Allowed origins**: `*` (or your specific domain like `https://myapp.pages.dev`).
-        * **Allowed methods**: `GET`, `PUT`, `MERGE`, `DELETE`, `OPTIONS`.
-        * **Allowed headers**: `*`.
-        * **Exposed headers**: `*`.
-        * **Max age**: `86400`.
+**Prerequisites:**
 
-### 2. Deployment
+* [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) installed and logged in (`az login`).
 
-1. Upload `index.html` to any static hosting provider (GitHub Pages, Azure Static Web Apps, or even an Azure Storage Blob container).
-2. Construct your access URL by appending your SAS URL to the **URL Hash** (using `#`), NOT the query string (using `?`).
+**Deploy:**
 
-   *   **CORRECT (Hash)**: `.../index.html#https://...` -> Secure. Token stays in browser.
-   *   **INCORRECT (Query)**: `.../index.html?https://...` -> Insecure. Token sent to server.
+1. Open a terminal in the project folder.
+2. Run the deployment command:
 
-   ```text
-   https://<your-website>/index.html#<YOUR_SAS_URL>
+   ```bash
+   # Default deployment (Policies expire in 1 year)
+   az deployment group create --resource-group <your-resource-group> --template-file main.bicep
+
+   # Custom deployment (Set specific location or policy duration)
+   az deployment group create \
+     --resource-group <your-resource-group> \
+     --template-file main.bicep \
+     --parameters location='eastus' policyExpiryTime='2028-01-01T00:00:00Z'
    ```
+
+3. The command will output the **Static Website Endpoint** (e.g., `https://<storage-account>.z22.web.core.windows.net/`).
+
+### 2. Generate SAS Token
+
+After deployment, you need to generate a SAS token to allow the app to access the database. The Bicep template has already created the necessary security policies (`webfulledit` and `webqueryupdate`).
+
+1. Go to the **Azure Portal** > Your Storage Account > **Storage Browser** > **Tables**.
+2. Select the table (e.g., `shoppinglist`).
+3. Click **Access Policy** to verify the policies exist.
+4. Use **Azure Storage Explorer** or the **Azure Portal** to generate a SAS token:
+
+   * **Signing method**: SAS key / Account Key.
+   * **Table**: Select your table.
+   * **Access Policy**: Select `webfulledit` (for full access) or `webqueryupdate` (for standard access).
+   * **Generate**.
+
+5. Copy the **Table Service SAS URL** (the full URL, e.g., `https://<account>.table.core.windows.net/shoppinglist?sv=...`).
+
+### 3. Construct Access URL
+
+Combine your Static Website URL with the SAS Token using a **Hash** (`#`), **NOT** a Query String (`?`).
+
+* **CORRECT (Hash)**: `.../index.html#https://...` -> **Secure**. Token stays in the browser and is NOT sent to the server.
+* **INCORRECT (Query)**: `.../index.html?https://...` -> **Insecure**. Token is sent to the server in the HTTP request.
+
+Format:
+`[Static Website URL]/#[SAS Token]`
+
+Example:
+`https://myshoppinglist.z22.web.core.windows.net/#https://mystorage.table.core.windows.net/shoppinglist?sv=2019-02-02&tn=shoppinglist&sig=...`
+
+> **Tip**: Bookmark this URL on your devices. The SAS token remains in your browser's hash fragment and is never sent to the hosting server.
 
 ## Usage
 
 ### View Mode
+
 By default, the list is in "View Mode". You can check and uncheck items, but you cannot add or delete them. This is great for shopping to avoid accidental edits.
 
 URL format:
-`https://<your-website>/index.html#<YOUR_SAS_URL>`
+`https://<your-website>/index.html#<YOUR_webqueryupdate_SAS_URL>`
 
 ### Edit Mode
+
 To add or delete items, append `?edit` **before** the hash (`#`).
 
 URL format:
-`https://<your-website>/index.html?edit#<YOUR_SAS_URL>`
+`https://<your-website>/index.html?edit#<YOUR_webfulledit_SAS_URL>`
 
-*   **Add Item**: Type in the text box and press Enter or click "Add".
-*   **Delete Item**: Click the "Delete" button next to an item (requires confirmation).
+* **Add Item**: Type in the text box and press Enter or click "Add".
+* **Delete Item**: Click the "Delete" button next to an item (requires confirmation).
 
-
-   **Example:**
-   `https://myshoppinglist.web.core.windows.net/index.html#https://mystorage.table.core.windows.net/shoppinglist?sv=2019-02-02&sig=...`
-
-3. Bookmark this URL on your devices. The SAS token remains in your browser's hash fragment and is never sent to the hosting server.
+  **Example:**
+  `https://myshoppinglist.web.core.windows.net/index.html#https://mystorage.table.core.windows.net/shoppinglist?sv=2019-02-02&sig=...`
 
 ## Managing Items
 
