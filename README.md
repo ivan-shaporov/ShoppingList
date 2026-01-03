@@ -7,16 +7,14 @@ A simple, persistent, real-time shopping list web app that works on Android and 
 ## Features
 
 * **Shared State**: Syncs between multiple users in near real-time.
-* **Smart Sorting**: Checked items move to the bottom; unchecked items move to the top.
 * **Zero Backend Code**: Connects directly from the browser to Azure Table Storage using a SAS token.
-* **Offline Capable**: Works with a local fallback list if no connection is configured.
 * **Privacy Focused**: Your data lives in your own Azure Storage account.
 
 ## Architecture
 
 * **Frontend**: Single HTML file (`index.html`) with vanilla JavaScript.
 * **Backend**: Azure Table Storage (No API servers, Functions, or App Services required).
-* **Security**: Shared Access Signature (SAS) token injected at build time.
+* **Security**: Shared Access Signature (SAS) token passed via URL hash (client-side only).
 
 ## Setup
 
@@ -40,33 +38,24 @@ A simple, persistent, real-time shopping list web app that works on Android and 
         * **Exposed headers**: `*`.
         * **Max age**: `86400`.
 
-### 2. Build the App
+### 2. Deployment
 
-To keep your secret SAS token out of source control, we use a template system.
+1. Upload `index.html` to any static hosting provider (GitHub Pages, Azure Static Web Apps, or even an Azure Storage Blob container).
+2. Construct your access URL by appending your SAS URL to the **URL Hash** (using `#`), NOT the query string (using `?`).
 
-1. Clone the repo.
-2. Run the build script with your SAS URL:
+   *   **CORRECT (Hash)**: `.../index.html#https://...` -> Secure. Token stays in browser.
+   *   **INCORRECT (Query)**: `.../index.html?https://...` -> Insecure. Token sent to server.
 
-    ```powershell
-    .\build.ps1 "YOUR_FULL_SAS_URL_HERE"
-    ```
+   ```text
+   https://<your-website>/index.html#<YOUR_SAS_URL>
+   ```
 
-3. This will generate an `index.html` file (which is git-ignored).
+   **Example:**
+   `https://myshoppinglist.web.core.windows.net/index.html#https://mystorage.table.core.windows.net/shoppinglist?sv=2019-02-02&sig=...`
 
-### 3. Deploy / Use
-
-* **Local**: Open `index.html` directly in your browser.
-* **Host**: Upload `index.html` to any static host (GitHub Pages, Azure Static Web Apps, Netlify, etc.). **Note**: Since the SAS token is embedded in the file, ensure the hosted URL is private or you trust the people you share it with.
-* **Azure Blob**: You can upload `index.html` to an Azure Blob Storage container and share it via a **Blob SAS URL**.
-  * *Important*: This Blob SAS URL is just for accessing the HTML file. It is different from the **Table SAS URL** that is embedded inside the code.
-* **First Run**: If your Azure Table is empty, the app will automatically populate it with a default set of items on the first run.
+3. Bookmark this URL on your devices. The SAS token remains in your browser's hash fragment and is never sent to the hosting server.
 
 ## Managing Items
 
 * **Editing**: The app currently does not support adding, editing, or deleting items via the UI.
 * **Admin**: You can manage the list items (add new ones, change text, delete old ones) directly in the Azure Table using tools like [Microsoft Azure Storage Explorer](https://azure.microsoft.com/en-us/products/storage/storage-explorer/) or the Azure Portal.
-
-## Development
-
-* Edit `index.template.html` for code changes.
-* Run `.\build.ps1 <sas-token>` to regenerate `index.html` for testing.

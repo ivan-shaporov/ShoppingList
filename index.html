@@ -65,8 +65,7 @@
 
   <script>
     // --- CONFIGURATION ---
-    // This is a placeholder. The build script will replace it with your real SAS token.
-    const TABLE_SAS_URL = "__SAS_TOKEN__"; 
+    // SAS token is now read from the URL hash (e.g. index.html#https://...)
     const PARTITION_KEY = "shopping-list";
     // ---------------------
 
@@ -81,15 +80,17 @@
 
     // Helper to parse URL
     function getTableParts() {
-      // Split the string to avoid replacement by build script
-      if (!TABLE_SAS_URL || TABLE_SAS_URL.includes("__SAS_" + "TOKEN__")) return null;
+      // Read from URL hash: #https://...
+      const hash = window.location.hash.substring(1); // Remove #
+      if (!hash) return null;
+
       try {
-        const urlObj = new URL(TABLE_SAS_URL);
+        const urlObj = new URL(hash);
         const baseUrl = urlObj.origin + urlObj.pathname;
         const sasToken = urlObj.search;
         return { baseUrl, sasToken };
       } catch (e) {
-        console.error("Invalid SAS URL", e);
+        console.error("Invalid SAS URL in hash", e);
         return null;
       }
     }
@@ -98,7 +99,7 @@
       const parts = getTableParts();
       if (!parts) {
         console.log("No SAS token configured. Using local mode.");
-        document.getElementById('status').innerText = "Offline Mode (bad config)";
+        document.getElementById('status').innerText = "Offline Mode (incomplete url)";
         items = [...sampleItems];
         render();
         return;
