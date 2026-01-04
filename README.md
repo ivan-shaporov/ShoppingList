@@ -43,18 +43,26 @@ This project includes a Bicep template that automates the entire infrastructure 
 
 **Deploy:**
 
+### Option 1: VS Code Task
+
+1. Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`).
+2. Type **"Tasks: Run Task"**.
+3. Select **"Deploy Bicep"**.
+4. Enter the **Resource Group** name (e.g., `checklist`).
+5. Enter a globally unique **Storage Account Name** (e.g., `mysharedlist123`).
+
+### Option 2: Azure CLI
+
 1. Open a terminal in the project folder.
 2. Run the deployment command:
 
    ```bash
    # Default deployment (Policies expire in 1 year)
-   az deployment group create --resource-group <your-resource-group> --template-file main.bicep
-
-   # Custom deployment (Set specific location or policy duration)
    az deployment group create \
      --resource-group <your-resource-group> \
      --template-file main.bicep \
-     --parameters location='eastus' policyExpiryTime='2028-01-01T00:00:00Z'
+     --name deploy \
+     --parameters storageAccountName=<unique-storage-name>
    ```
 
 3. The command will output the **Static Website Endpoint** (e.g., `https://<storage-account>.z22.web.core.windows.net/`).
