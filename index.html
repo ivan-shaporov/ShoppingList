@@ -91,6 +91,9 @@
     const PARTITION_KEY = "shopping-list";
     // ---------------------
 
+    const urlParams = new URLSearchParams(window.location.search);
+    const isEditMode = urlParams.has('edit');
+
     // Local fallback data
     let sampleItems = [
       { id: "1", text: "bread", checked: false, order: 100 },
@@ -139,6 +142,14 @@
         const data = await response.json();
         
         if (data.value.length === 0) {
+          if (!isEditMode) {
+            console.log("Table empty. View mode will not seed.");
+            items = [];
+            render();
+            document.getElementById('status').innerText = "Empty";
+            return;
+          }
+
           console.log("Table empty, seeding with sample items...");
           items = [...sampleItems];
           render(); // Show immediately
@@ -183,12 +194,34 @@
       };
 
       try {
-        // Use PUT to replace/update
+        // IMPORTANT:
+        // - In view mode, we must NOT use PUT without If-Match because Azure Tables treats it as InsertOrReplace
+        //   (requires Add permission). That causes 403 with the `webqueryupdate` (ru) policy.
+        // - Use MERGE + If-Match for update-only behavior.
+        const commonHeaders = {
+          "Content-Type": "application/json",
+          "Accept": "application/json;odata=nometadata",
+          "x-ms-date": new Date().toUTCString(),
+          "x-ms-version": "2019-02-02"
+        };
+
+        if (!isEditMode) {
+          await fetch(entityUrl, {
+            method: "MERGE",
+            headers: {
+              ...commonHeaders,
+              "If-Match": "*"
+            },
+            body: JSON.stringify(payload)
+          });
+          return;
+        }
+
+        // Edit mode: allow inserts/replace (requires Add+Update on the SAS policy)
         await fetch(entityUrl, {
           method: "PUT", 
           headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json"
+            ...commonHeaders
           },
           body: JSON.stringify(payload)
         });
@@ -323,8 +356,7 @@
     });
 
     // Check for edit mode
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.has('edit')) {
+    if (isEditMode) {
       document.getElementById('addItemContainer').style.display = 'flex';
       document.body.classList.add('edit-mode');
     }
