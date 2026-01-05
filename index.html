@@ -23,6 +23,14 @@
       color: #444;
     }
 
+    h3 {
+      margin-top: 10px;
+      margin-bottom: 6px;
+      font-size: 0.95rem;
+      color: #666;
+      font-weight: 600;
+    }
+
     ul {
       list-style: none;
       padding: 0;
@@ -69,34 +77,63 @@
   </style>
 </head>
 <body>
-  
-  <div id="addItemContainer" style="display: none; gap: 8px; margin-bottom: 16px;">
-    <input type="text" id="newItemInput" placeholder="Add new item..." style="flex-grow: 1; padding: 8px; font-size: 1rem;">
-    <button id="addItemBtn" style="padding: 8px 16px; font-size: 1rem;">Add</button>
+
+  <div id="globalAddContainer" style="display: none; gap: 8px; margin-bottom: 16px;">
+    <input type="text" id="newPartitionInput" placeholder="List name..." style="width: 180px; padding: 8px; font-size: 1rem;">
+    <input type="text" id="newGlobalItemInput" placeholder="Add new item..." style="flex-grow: 1; padding: 8px; font-size: 1rem;">
+    <button id="addGlobalItemBtn" style="padding: 8px 16px; font-size: 1rem;">Add</button>
   </div>
+
 
   <div id="status">Connecting...</div>
 
-  <h2>Pending</h2>
-  <ul id="unchecked"></ul>
-
-  <h2>Done</h2>
-  <ul id="checked"></ul>
+  <div id="lists"></div>
 
   <script>
     // --- CONFIGURATION ---
     // SAS token is now read from the URL hash (e.g. index.html#https://...)
-    const PARTITION_KEY = "shared-list";
     // ---------------------
 
     const urlParams = new URLSearchParams(window.location.search);
     const isEditMode = urlParams.has('edit');
 
+    const draftTextByPartition = new Map();
+
+    function sasHasPartitionFilter(sasToken) {
+      const query = (sasToken || "").startsWith("?") ? sasToken.slice(1) : (sasToken || "");
+      if (!query) return false;
+
+      const params = new URLSearchParams(query);
+
+      // SAS-scoped partition key range parameters (Azure Tables SAS)
+      for (const [key] of params.entries()) {
+        const k = key.toLowerCase();
+        if (k === 'spk' || k === 'epk' || k === 'sprk' || k === 'eprk') return true;
+      }
+
+      return false;
+    }
+
+    function updateGlobalAdderVisibility() {
+      const el = document.getElementById('globalAddContainer');
+      if (!el) return;
+
+      if (!isEditMode) {
+        el.style.display = 'none';
+        return;
+      }
+
+      const parts = getTableParts();
+      // Show when offline OR when online without a PartitionKey filter.
+      el.style.display = (!parts || !sasHasPartitionFilter(parts.sasToken)) ? 'flex' : 'none';
+    }
+
     // Local fallback data
     let sampleItems = [
-      { id: "1", text: "bread", checked: false, order: 100 },
-      { id: "2", text: "eggs", checked: false, order: 99 },
-      { id: "3", text: "milk", checked: false, order: 98 }
+      { id: "1", partitionKey: "grocery", text: "bread", checked: false, order: 100 },
+      { id: "2", partitionKey: "grocery", text: "eggs", checked: false, order: 99 },
+      { id: "3", partitionKey: "grocery", text: "milk", checked: false, order: 98 },
+      { id: "4", partitionKey: "errands", text: "walk the dog", checked: false, order: 97 },
     ];
 
     let items = [];
@@ -120,6 +157,7 @@
 
     async function fetchItems() {
       const parts = getTableParts();
+      updateGlobalAdderVisibility();
       if (!parts) {
         console.log("No SAS token configured. Using local mode.");
         document.getElementById('status').innerText = "Offline Mode (incomplete url)";
@@ -144,7 +182,7 @@
             console.log("Table empty. View mode will not seed.");
             items = [];
             render();
-            document.getElementById('status').innerText = "Empty";
+            document.getElementById('status').innerText = "Empty and readonly";
             return;
           }
 
@@ -162,6 +200,7 @@
           // Map Azure Table entities to our format
           items = data.value.map(entity => ({
             id: entity.RowKey,
+            partitionKey: entity.PartitionKey,
             text: entity.Text || entity.text, // Handle case sensitivity
             checked: entity.Checked || entity.checked || false,
             order: entity.Order || entity.order || 0,
@@ -180,11 +219,13 @@
       const parts = getTableParts();
       if (!parts) return;
 
+      const pk = item.partitionKey;
+
       // Construct Entity URL: Base(PartitionKey='...', RowKey='...')?SAS
-      const entityUrl = `${parts.baseUrl}(PartitionKey='${PARTITION_KEY}',RowKey='${item.id}')${parts.sasToken}`;
+      const entityUrl = `${parts.baseUrl}(PartitionKey='${pk}',RowKey='${item.id}')${parts.sasToken}`;
       
       const payload = {
-        PartitionKey: PARTITION_KEY,
+        PartitionKey: pk,
         RowKey: item.id,
         Text: item.text,
         Checked: item.checked,
@@ -251,8 +292,10 @@
       const parts = getTableParts();
       if (!parts) return;
 
+      const pk = item.partitionKey;
+
       // Construct Entity URL
-      const entityUrl = `${parts.baseUrl}(PartitionKey='${PARTITION_KEY}',RowKey='${item.id}')${parts.sasToken}`;
+      const entityUrl = `${parts.baseUrl}(PartitionKey='${pk}',RowKey='${item.id}')${parts.sasToken}`;
       
       try {
         await fetch(entityUrl, {
@@ -269,18 +312,122 @@
     }
 
     function render() {
-      const uncheckedEl = document.getElementById("unchecked");
-      const checkedEl = document.getElementById("checked");
+      const listsEl = document.getElementById("lists");
 
-      uncheckedEl.innerHTML = "";
-      checkedEl.innerHTML = "";
+      // Preserve any in-progress typing in add inputs across re-renders.
+      let activeDraftPartition = null;
+      let activeSelection = null;
+      const activeEl = document.activeElement;
+      if (activeEl && activeEl instanceof HTMLInputElement) {
+        const pk = activeEl.dataset && activeEl.dataset.addPartition;
+        if (pk) {
+          activeDraftPartition = pk;
+          activeSelection = {
+            start: activeEl.selectionStart,
+            end: activeEl.selectionEnd
+          };
+        }
+      }
 
-      // Sort: Unchecked (Order DESC), Checked (Order DESC)
-      const uncheckedItems = items.filter(i => !i.checked).sort((a, b) => b.order - a.order);
-      const checkedItems = items.filter(i => i.checked).sort((a, b) => b.order - a.order);
+      document.querySelectorAll('input[data-add-partition]').forEach((input) => {
+        draftTextByPartition.set(input.dataset.addPartition, input.value);
+      });
 
-      uncheckedItems.forEach(item => uncheckedEl.appendChild(renderItem(item)));
-      checkedItems.forEach(item => checkedEl.appendChild(renderItem(item)));
+      listsEl.innerHTML = "";
+
+      const partitions = new Map();
+      for (const item of items) {
+        const pk = item.partitionKey || "(no partition)";
+        if (!partitions.has(pk)) partitions.set(pk, []);
+        partitions.get(pk).push(item);
+      }
+
+      const partitionKeys = Array.from(partitions.keys()).sort((a, b) => a.localeCompare(b));
+
+      for (const pk of partitionKeys) {
+        const section = document.createElement("section");
+
+        const title = document.createElement("h2");
+        title.textContent = pk;
+        section.appendChild(title);
+
+        const partitionItems = partitions.get(pk);
+
+        // Sort: Unchecked (Order DESC), Checked (Order DESC)
+        const uncheckedItems = partitionItems.filter(i => !i.checked).sort((a, b) => b.order - a.order);
+        const checkedItems = partitionItems.filter(i => i.checked).sort((a, b) => b.order - a.order);
+
+        const pendingTitle = document.createElement("h3");
+        pendingTitle.textContent = "Pending";
+        section.appendChild(pendingTitle);
+
+        const pendingList = document.createElement("ul");
+        uncheckedItems.forEach(item => pendingList.appendChild(renderItem(item)));
+        section.appendChild(pendingList);
+
+        const doneTitle = document.createElement("h3");
+        doneTitle.textContent = "Done";
+        section.appendChild(doneTitle);
+
+        const doneList = document.createElement("ul");
+        checkedItems.forEach(item => doneList.appendChild(renderItem(item)));
+        section.appendChild(doneList);
+
+        if (isEditMode) {
+          section.appendChild(renderAddRow(pk));
+        }
+
+        listsEl.appendChild(section);
+      }
+
+      if (activeDraftPartition) {
+        const newActive = document.querySelector(`input[data-add-partition="${CSS.escape(activeDraftPartition)}"]`);
+        if (newActive) {
+          newActive.focus();
+          if (activeSelection && typeof activeSelection.start === 'number' && typeof activeSelection.end === 'number') {
+            try {
+              newActive.setSelectionRange(activeSelection.start, activeSelection.end);
+            } catch {
+              // Some browsers can throw if selection is invalid; ignore.
+            }
+          }
+        }
+      }
+    }
+
+    function renderAddRow(partitionKey) {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+      row.style.marginTop = "10px";
+      row.style.marginBottom = "16px";
+
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = "Add new item...";
+      input.dataset.addPartition = partitionKey;
+      input.style.flexGrow = "1";
+      input.style.padding = "8px";
+      input.style.fontSize = "1rem";
+      input.value = draftTextByPartition.get(partitionKey) || "";
+      input.addEventListener("input", () => {
+        draftTextByPartition.set(partitionKey, input.value);
+      });
+
+      const btn = document.createElement("button");
+      btn.textContent = "Add";
+      btn.style.padding = "8px 16px";
+      btn.style.fontSize = "1rem";
+
+      const submit = () => addItemToPartition(partitionKey, input);
+      btn.addEventListener("click", submit);
+      input.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") submit();
+      });
+
+      row.appendChild(input);
+      row.appendChild(btn);
+      return row;
     }
 
     function renderItem(item) {
@@ -288,7 +435,7 @@
       const checkbox = document.createElement("input");
       checkbox.type = "checkbox";
       checkbox.checked = item.checked;
-      checkbox.addEventListener("change", () => toggleItem(item.id));
+      checkbox.addEventListener("change", () => toggleItem(item));
 
       li.appendChild(checkbox);
       li.appendChild(document.createTextNode(item.text));
@@ -302,8 +449,7 @@
       return li;
     }
 
-    async function toggleItem(id) {
-      const item = items.find(i => i.id === id);
+    async function toggleItem(item) {
       if (!item) return;
 
       // Optimistic update
@@ -317,7 +463,7 @@
         await updateItemInCloud(item);
       } else {
         // Update local fallback
-        const sampleItem = sampleItems.find(i => i.id === id);
+        const sampleItem = sampleItems.find(i => i.id === item.id);
         if (sampleItem) {
             sampleItem.checked = item.checked;
             sampleItem.order = item.order;
@@ -325,20 +471,21 @@
       }
     }
 
-    async function addItem() {
-      const input = document.getElementById("newItemInput");
-      const text = input.value.trim();
+    async function addItemToPartition(partitionKey, inputEl) {
+      const text = inputEl.value.trim();
       if (!text) return;
 
       const newItem = {
         id: Date.now().toString(),
+        partitionKey: partitionKey,
         text: text,
         checked: false,
         order: Date.now()
       };
 
       items.push(newItem);
-      input.value = "";
+      inputEl.value = "";
+      draftTextByPartition.set(partitionKey, "");
       render();
 
       if (getTableParts()) {
@@ -348,16 +495,29 @@
       }
     }
 
-    document.getElementById("addItemBtn").addEventListener("click", addItem);
-    document.getElementById("newItemInput").addEventListener("keypress", (e) => {
-      if (e.key === "Enter") addItem();
-    });
+    async function addItemWithPartitionName() {
+      const partitionEl = document.getElementById("newPartitionInput");
+      const itemEl = document.getElementById("newGlobalItemInput");
+      const partitionKey = partitionEl.value.trim();
+      if (!partitionKey) return;
+
+      await addItemToPartition(partitionKey, itemEl);
+    }
 
     // Check for edit mode
     if (isEditMode) {
-      document.getElementById('addItemContainer').style.display = 'flex';
       document.body.classList.add('edit-mode');
     }
+
+    updateGlobalAdderVisibility();
+
+    document.getElementById("addGlobalItemBtn").addEventListener("click", addItemWithPartitionName);
+    document.getElementById("newGlobalItemInput").addEventListener("keypress", (e) => {
+      if (e.key === "Enter") addItemWithPartitionName();
+    });
+    document.getElementById("newPartitionInput").addEventListener("keypress", (e) => {
+      if (e.key === "Enter") addItemWithPartitionName();
+    });
 
     // Initial load
     fetchItems();

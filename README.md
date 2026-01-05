@@ -1,6 +1,6 @@
 # Synclist
 
-> **Disclaimer**: This project is 100% vibecoded.
+> **Disclaimer**: This project is 100% vibe-coded.
 
 A simple, persistent, real-time checklist web app that works in a browser.
 
@@ -14,6 +14,7 @@ Perfect for **Shared Shopping Lists**.
 * **Zero Backend Code**: Connects directly from the browser to Azure Table Storage using a SAS token.
 * **Privacy Focused**: Your data lives in your own Azure Storage account.
 * **Edit Mode**: Toggle between a clean view-only list and an editable interface.
+* **Multiple Lists**: Items are grouped by list name (Azure Table `PartitionKey`).
 
 ## Architecture
 
@@ -104,6 +105,15 @@ Example:
 
 ## Usage
 
+## Lists (Partitions)
+
+This app supports multiple independent lists inside the same Azure Table:
+
+* Each list is an Azure Table **`PartitionKey`**.
+* The UI renders **one section per list**.
+
+In edit mode, each list section has its own “Add new item…” input. There is also a global adder (“List name…” + “Add new item…”) that is only shown when the SAS URL is not restricted to a single list.
+
 ### View Mode
 
 By default, the list is in "View Mode". You can check and uncheck items, but you cannot add or delete them. This is great for execution phase to avoid accidental edits.
@@ -142,3 +152,20 @@ If you make changes to `index.html`, you can upload the new version without re-d
 3. Select **"Upload index.html"**.
 4. Enter the **Storage Account Name** when prompted.
 
+## Sharing One List vs All Lists
+
+You can deploy once and share either:
+
+* **All lists** (multi-list access): generate a normal Table SAS URL for the table.
+* **A single list** (one `PartitionKey` only): generate a SAS URL that is partition-scoped.
+
+Partition-scoped Table SAS URLs commonly include parameters like `spk`/`epk` or `sprk`/`eprk` in the SAS query string (tooling varies). When these are present, the app hides the global adder because the URL is intentionally restricted to one list.
+
+How to generate a single-list link (high level):
+
+1. In Azure Storage Explorer (or your SAS generator), choose your table and create a SAS.
+2. Set the **start/end partition key** (or equivalent) to the list name you want to share.
+  Caveat: when you scope a Table SAS to a **partition key range**, Azure also requires a **row key range**.
+  When you set start/end partition key, also set start/end row key.
+  Use `0` for start row key and `A` for end row key. Using characters like `!` and `~` caused update operations to fail in our testing.
+3. Use that SAS URL in the normal hash format.
